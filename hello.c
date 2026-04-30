@@ -38,6 +38,13 @@
 
 #define TONE_HZ 440 // Frequency in Hz
 
+#define RED 0x02
+#define BLUE 0x04
+#define MAGENTA 0x06
+#define GREEN 0x08
+#define YELLOW 0x0A
+#define CYAN 0x0C
+
 #define SYSCLK          16000000UL  
 #define PWM_FREQ        20000UL     
 #define FS              8000UL 
@@ -53,9 +60,7 @@
 
 volatile uint32_t indexFP = 0;
 volatile uint32_t stepFP  = 0;
-
 volatile uint32_t sysTicks = 0;
-
 volatile uint8_t muted = 0;
 
 const uint8_t sineTable[TABLE_SIZE] = {
@@ -65,8 +70,9 @@ const uint8_t sineTable[TABLE_SIZE] = {
 1,1,2,3,5,6,8,8
 };
 
-volatile uint16_t progression = 1;
+volatile int progression = 1;
 volatile int ending = 0;
+volatile int state = 2;
 
 // pwm initilisation
 void PWM_Init(void) {
@@ -92,11 +98,22 @@ void PWM_Init(void) {
     PWM0_ENABLE_R |= 0x01;
 }
 
+PortFInit(){
+    SYSCTL_RCGCGPIO_R |= 0x20; // Enable clock for Port F
+    while ((SYSCTL_RCGCGPIO_R & 0x20) == 0) {} // Wait for clock
+    GPIO_PORTF_LOCK_R = 0x4C4F434B; // Unlock Port F
+    GPIO_PORTF_CR_R = 0x1F; // Allow changes to PF4-PF0
+    GPIO_PORTF_DIR_R = 0x0E; // PF1-PF3 output, PF4,PF0 input
+    GPIO_PORTF_AFSEL_R = 0x00; // Disable alternate functions
+    GPIO_PORTF_PUR_R = 0x11; // Enable pull-up on PF4 and PF0
+    GPIO_PORTF_DEN_R = 0x1F; // Enable digital I/O on PF4-PF0
+}
 
+volatile uint32_t heart =0;
 
 void SysTick_Handler(void) {
     sysTicks++;   // always increment for timing
-
+    heart++;
     if (!muted) {
         uint32_t idx = (indexFP >> 8) % TABLE_SIZE;
         PWM0_0_CMPA_R = PWM_LOAD - (PWM_LOAD * (uint32_t)sineTable[idx]) / MAX_VAL;
@@ -161,30 +178,40 @@ void D();
 
 void G(){
 
-
+    GPIO_PORTF_DATA_R = BLUE;
     if (progression == 7){
         note(47,10);
     } else {
          note(47, 5);
     }
 
-    //GPIO_PORTB_DATA_R = RED;
     rest(1);
+    
     if ((progression == 1) || (progression == 3)) {
         progression++;
-        G();
+        state = 1;
+        return;
     }
-    if ((progression == 2) || (progression == 7)) {
-        progression = 1;
-        F();
+    if ((progression == 2)) {
+        progression++;
+        state = 3;
+        return;
     }
     if ((progression == 4)) {
         progression++;
-        A();
+        state = 5;
+        return;
     }
+    if ((progression == 7)) {
+        progression = 1;
+        state = 3;
+        return;
+    }
+
 }
 
 void C(){
+    GPIO_PORTF_DATA_R = RED;
     if (progression == 7){
         note(40,10);
     } else {
@@ -194,58 +221,74 @@ void C(){
     rest(1);
     if ((progression == 1)) {
         progression++;
-        C();
+        state = 2;
+        return;
     }
     if ((progression == 2)) {
         progression++;
-        G();
+        state = 1;
+        return;
     }
     if ((progression == 7)) {
         progression = 1;
-        G();
+        state = 1;
+        return;
     }
+
 }
 
 void F(){
+    GPIO_PORTF_DATA_R = GREEN;
     note(45, 5);
     rest(1);
     if ((progression == 1) || (progression == 3)) {
         progression++;
-        F();
+        state = 3;
+        return;
     }
     if ((progression == 2) || (progression == 4)) {
         progression++;
-        E();
+        state = 4;
+        return;
     }
 }
 
 void E(){
+    GPIO_PORTF_DATA_R = YELLOW;
     note(44, 5);
     rest(1);
     if ((progression == 3) || (progression == 5)) {
         progression++;
-        E();
+        state = 4;
+        return;
     }
     if ((progression == 4) || (progression == 6)) {
         progression++;
-        D();
+        state = 6;
+        return;
     }
+
 }
 
 void A(){
+    GPIO_PORTF_DATA_R = MAGENTA;
     note(49, 5);
     rest(1);
     if ((progression == 6)) {
         progression++;
-        G();
+        state = 1;
+        return;
     }
     if ((progression == 5)) {
         progression++;
-        A();
+        state = 5;
+        return;
     }
+
 }
 
 void D(){
+    GPIO_PORTF_DATA_R = CYAN;
     if (progression == 7){
         note(42,10);
     } else {
@@ -255,24 +298,31 @@ void D(){
     rest(1);
     if ((progression == 6)) {
         progression++;
-        C();
+        state = 2;
+        return;
     }
+
     if ((progression == 7)) {
         if (ending == 0){
             progression = 1;
             ending = 1;
-            G();
+            state = 1;
+            return;
         }
-        if (ending == 1){
+        else {
             progression = 1;
             ending = 0;
-            C();
+            state = 2;
+            return;
         }
     }
+
     if ((progression == 5)) {
         progression++;
-        D();
+        state = 6;
+        return;
     }
+
 }
 
 
@@ -280,10 +330,17 @@ void D(){
 
 int main(void) {
     PWM_Init();                    
-    SysTick_Init();               
+    SysTick_Init();    
+    PortFInit();           
 
     while(1){
-        C();       
+        if (state == 1) G();
+        if (state == 2) C();
+        if (state == 3) F();
+        if (state == 4) E();
+        if (state == 5) A();
+        if (state == 6) D();
     }
+    
     
 }
