@@ -1,5 +1,26 @@
 #include <stdint.h>
+#include <stdbool.h>
 #include <math.h>
+#include "inc/hw_ints.h"
+#include "inc/hw_memmap.h"
+#include "driverlib/debug.h"
+#include "driverlib/fpu.h"
+#include "driverlib/gpio.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/rom.h"
+#include "driverlib/rom_map.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/uart.h"
+#include "driverlib/pwm.h"
+#include "driverlib/systick.h"
+
+#ifdef DEBUG
+void
+__error__(char *pcFilename, uint32_t ui32Line)
+{
+}
+#endif
 
 // System control registers
 #define SYSCTL_RCGCGPIO_R (*((volatile uint32_t *)0x400FE608)) // GPIO clock
@@ -12,7 +33,6 @@
 #define GPIO_PORTB_AMSEL_R (*((volatile uint32_t *)0x40005528)) // Analog mode
 #define GPIO_PORTB_PCTL_R (*((volatile uint32_t *)0x4000552C)) // Port control
 
-
 // Port F GPIO registers (base: 0x40025000)
 #define GPIO_PORTF_DATA_R (*((volatile uint32_t *)0x400253FC)) // Data
 #define GPIO_PORTF_DIR_R (*((volatile uint32_t *)0x40025400)) // Direction
@@ -22,12 +42,10 @@
 #define GPIO_PORTF_LOCK_R (*((volatile uint32_t *)0x40025520)) // Lock
 #define GPIO_PORTF_CR_R (*((volatile uint32_t *)0x40025524)) // Commit
 
-
 // SysTick registers (Cortex-M core)
 #define NVIC_ST_CTRL_R (*((volatile uint32_t *)0xE000E010)) // Control/Status
 #define NVIC_ST_RELOAD_R (*((volatile uint32_t *)0xE000E014)) // Reload value
 #define NVIC_ST_CURRENT_R (*((volatile uint32_t *)0xE000E018)) // Current value
-
 
 // PWM Module 0, Generator 0 registers (base: 0x40028000)
 #define PWM0_ENABLE_R (*((volatile uint32_t *)0x40028008)) // PWM output enable
@@ -53,7 +71,6 @@
 #define SYSTICK_RELOAD  ((SYSCLK / FS) - 1UL) // SysTick fires at FS  ->  RELOAD = SYSCLK/FS - 1 = 1999
 #define TICKS_PER_100MS (FS / 10)   // 800 ticks = 100 ms
 
-
 #define TABLE_SIZE  32
 #define N_BITS      4
 #define MAX_VAL     15 
@@ -62,6 +79,7 @@ volatile uint32_t indexFP = 0;
 volatile uint32_t stepFP  = 0;
 volatile uint32_t sysTicks = 0;
 volatile uint8_t muted = 0;
+volatile uint8_t paused = 0; // 1 = user paused via 'p' keypress, 0 = playing
 
 const uint8_t sineTable[TABLE_SIZE] = {
 8,10,11,13,14,15,15,15,
@@ -73,6 +91,52 @@ const uint8_t sineTable[TABLE_SIZE] = {
 volatile int progression = 1;
 volatile int ending = 0;
 volatile int state = 2;
+
+// Send a string to the UART
+void
+UARTSend(const uint8_t *pui8Buffer, uint32_t ui32Count)
+{
+    
+    // Loop when theres more characters to send
+    while(ui32Count--)
+    {
+        
+        // Write the next character to the UART
+        MAP_UARTCharPutNonBlocking(UART0_BASE, *pui8Buffer++);
+    }
+}
+
+void
+UARTIntHandler(void)
+{
+    uint32_t ui32Status;
+
+ 
+    ui32Status = MAP_UARTIntStatus(UART0_BASE, true);
+
+
+    // Clear the asserted interrupts
+    MAP_UARTIntClear(UART0_BASE, ui32Status);
+
+
+    // Loop while there are characters in the receive FIFO
+    while(MAP_UARTCharsAvail(UART0_BASE))
+    {
+
+        // Read the next character from the UART and write it back to the UART
+        char c = (char)MAP_UARTCharGetNonBlocking(UART0_BASE);
+        MAP_UARTCharPutNonBlocking(UART0_BASE, c);
+
+        // Toggle pause/play 'p'
+        if (c == 'p' || c == 'P') {
+            paused = !paused;
+            if (paused)
+                UARTSend((uint8_t *)"\r\n[PAUSED]  press p to resume\r\n", 31);
+            else
+                UARTSend((uint8_t *)"\r\n[PLAYING] press p to pause\r\n", 30);
+        }
+    }
+}
 
 // pwm initilisation
 void PWM_Init(void) {
@@ -109,12 +173,12 @@ PortFInit(){
     GPIO_PORTF_DEN_R = 0x1F; // Enable digital I/O on PF4-PF0
 }
 
-volatile uint32_t heart =0;
+volatile uint32_t heart = 0;
 
 void SysTick_Handler(void) {
     sysTicks++;   // always increment for timing
     heart++;
-    if (!muted) {
+    if (!muted && !paused) { // silence when muted (rests) OR when user has paused playback
         uint32_t idx = (indexFP >> 8) % TABLE_SIZE;
         PWM0_0_CMPA_R = PWM_LOAD - (PWM_LOAD * (uint32_t)sineTable[idx]) / MAX_VAL;
 
@@ -127,13 +191,20 @@ void SysTick_Handler(void) {
     }
 }
 
-
-
 static void waitTicks(uint32_t ticks) {
-    uint32_t start = sysTicks;
-    while ((sysTicks - start) < ticks) {}
-}
+    uint32_t counted = 0;
+    uint32_t last    = sysTicks;
 
+    while (counted < ticks) {
+        if (!paused) {
+            uint32_t now = sysTicks;
+            counted += (now - last);
+            last = now;
+        } else {
+            last = sysTicks; // reset reference so paused time is not counted
+        }
+    }
+}
 
 // systick initialisation
 void SysTick_Init(void) {
@@ -142,10 +213,6 @@ void SysTick_Init(void) {
     NVIC_ST_CURRENT_R = 0;
     NVIC_ST_CTRL_R    = 0x07;           
 }
-
-
-
-
 
 void rest(float dur) { // 10 for 1 sec
     muted   = 1;
@@ -167,14 +234,12 @@ void note (int keynum, float dur){
 
 }
 
-
 void G();
 void C();
 void F();
 void E();
 void A();
 void D();
-
 
 void G(){
 
@@ -325,21 +390,44 @@ void D(){
 
 }
 
-
-
-
 int main(void) {
+    MAP_FPUEnable();
+    MAP_FPULazyStackingEnable();
+
+    MAP_SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_OSC | SYSCTL_OSC_MAIN |
+                       SYSCTL_XTAL_16MHZ);
+
     PWM_Init();                    
     SysTick_Init();    
-    PortFInit();           
+    PortFInit();
+
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+
+    MAP_IntMasterEnable();
+
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    MAP_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+
+    MAP_UARTConfigSetExpClk(UART0_BASE, MAP_SysCtlClockGet(), 115200,
+                            (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
+                             UART_CONFIG_PAR_NONE));
+
+    MAP_IntEnable(INT_UART0);
+    MAP_UARTIntEnable(UART0_BASE, UART_INT_RX | UART_INT_RT);
+
+    UARTSend((uint8_t *)"Ready. Press p to pause/play.\r\n", 31);
 
     while(1){
-        if (state == 1) G();
-        if (state == 2) C();
-        if (state == 3) F();
-        if (state == 4) E();
-        if (state == 5) A();
-        if (state == 6) D();
+        if (!paused) {
+            if (state == 1) G();
+            if (state == 2) C();
+            if (state == 3) F();
+            if (state == 4) E();
+            if (state == 5) A();
+            if (state == 6) D();
+        }
     }
     
     

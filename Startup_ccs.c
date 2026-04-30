@@ -35,7 +35,7 @@ void ResetISR(void);
 static void NmiSR(void);
 static void FaultISR(void);
 static void IntDefaultHandler(void);
-static void SysTick_Handler(void);
+
 //*****************************************************************************
 //
 // External declaration for the reset handler that is to be called when the
@@ -50,6 +50,14 @@ extern void _c_int00(void);
 //
 //*****************************************************************************
 extern uint32_t __STACK_TOP;
+
+//*****************************************************************************
+//
+// External declaration for the interrupt handler used by the application.
+//
+//*****************************************************************************
+extern void UARTIntHandler(void);
+extern void SysTick_Handler(void); // Added: SysTick handler for audio sample output and timing
 
 //*****************************************************************************
 //
@@ -77,13 +85,13 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Debug monitor handler
     0,                                      // Reserved
     IntDefaultHandler,                      // The PendSV handler
-    SysTick_Handler,                        // The SysTick handler
+    SysTick_Handler,                        // The SysTick handler - Added: drives PWM audio output at FS rate
     IntDefaultHandler,                      // GPIO Port A
     IntDefaultHandler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
     IntDefaultHandler,                      // GPIO Port E
-    IntDefaultHandler,                      // UART0 Rx and Tx
+    UARTIntHandler,                         // UART0 Rx and Tx
     IntDefaultHandler,                      // UART1 Rx and Tx
     IntDefaultHandler,                      // SSI0 Rx and Tx
     IntDefaultHandler,                      // I2C0 Master and Slave
