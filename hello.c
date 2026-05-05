@@ -3,6 +3,7 @@
 #include <math.h>
 #include "inc/hw_ints.h"
 #include "inc/hw_memmap.h"
+#include "inc/hw_udma.h"
 #include "driverlib/debug.h"
 #include "driverlib/fpu.h"
 #include "driverlib/gpio.h"
@@ -14,6 +15,7 @@
 #include "driverlib/uart.h"
 #include "driverlib/pwm.h"
 #include "driverlib/systick.h"
+#include "driverlib/udma.h"
 
 #ifdef DEBUG
 void
@@ -23,57 +25,63 @@ __error__(char *pcFilename, uint32_t ui32Line)
 #endif
 
 // System control registers
-#define SYSCTL_RCGCGPIO_R (*((volatile uint32_t *)0x400FE608)) // GPIO clock
-#define SYSCTL_RCGCPWM_R (*((volatile uint32_t *)0x400FE640)) // PWM clock
+#define SYSCTL_RCGCGPIO_R   (*((volatile uint32_t *)0x400FE608)) // GPIO clock
+#define SYSCTL_RCGCPWM_R    (*((volatile uint32_t *)0x400FE640)) // PWM clock
 #define SYSCTL_RCC_R        (*((volatile uint32_t *)0x400FE060))
 
 // GPIO Port B registers (base: 0x40005000)
-#define GPIO_PORTB_AFSEL_R (*((volatile uint32_t *)0x40005420)) // Alt function
-#define GPIO_PORTB_DEN_R (*((volatile uint32_t *)0x4000551C)) // Digital enable
-#define GPIO_PORTB_AMSEL_R (*((volatile uint32_t *)0x40005528)) // Analog mode
-#define GPIO_PORTB_PCTL_R (*((volatile uint32_t *)0x4000552C)) // Port control
+#define GPIO_PORTB_AFSEL_R  (*((volatile uint32_t *)0x40005420)) // Alt function
+#define GPIO_PORTB_DEN_R    (*((volatile uint32_t *)0x4000551C)) // Digital enable
+#define GPIO_PORTB_AMSEL_R  (*((volatile uint32_t *)0x40005528)) // Analog mode
+#define GPIO_PORTB_PCTL_R   (*((volatile uint32_t *)0x4000552C)) // Port control
 
 // Port F GPIO registers (base: 0x40025000)
-#define GPIO_PORTF_DATA_R (*((volatile uint32_t *)0x400253FC)) // Data
-#define GPIO_PORTF_DIR_R (*((volatile uint32_t *)0x40025400)) // Direction
-#define GPIO_PORTF_AFSEL_R (*((volatile uint32_t *)0x40025420)) // Alt function
-#define GPIO_PORTF_PUR_R (*((volatile uint32_t *)0x40025510)) // Pull-up
-#define GPIO_PORTF_DEN_R (*((volatile uint32_t *)0x4002551C)) // Digital enable
-#define GPIO_PORTF_LOCK_R (*((volatile uint32_t *)0x40025520)) // Lock
-#define GPIO_PORTF_CR_R (*((volatile uint32_t *)0x40025524)) // Commit
+#define GPIO_PORTF_DATA_R   (*((volatile uint32_t *)0x400253FC)) // Data
+#define GPIO_PORTF_DIR_R    (*((volatile uint32_t *)0x40025400)) // Direction
+#define GPIO_PORTF_AFSEL_R  (*((volatile uint32_t *)0x40025420)) // Alt function
+#define GPIO_PORTF_PUR_R    (*((volatile uint32_t *)0x40025510)) // Pull-up
+#define GPIO_PORTF_DEN_R    (*((volatile uint32_t *)0x4002551C)) // Digital enable
+#define GPIO_PORTF_LOCK_R   (*((volatile uint32_t *)0x40025520)) // Lock
+#define GPIO_PORTF_CR_R     (*((volatile uint32_t *)0x40025524)) // Commit
 
 // SysTick registers (Cortex-M core)
-#define NVIC_ST_CTRL_R (*((volatile uint32_t *)0xE000E010)) // Control/Status
-#define NVIC_ST_RELOAD_R (*((volatile uint32_t *)0xE000E014)) // Reload value
-#define NVIC_ST_CURRENT_R (*((volatile uint32_t *)0xE000E018)) // Current value
+#define NVIC_ST_CTRL_R      (*((volatile uint32_t *)0xE000E010)) // Control/Status
+#define NVIC_ST_RELOAD_R    (*((volatile uint32_t *)0xE000E014)) // Reload value
+#define NVIC_ST_CURRENT_R   (*((volatile uint32_t *)0xE000E018)) // Current value
 
 // PWM Module 0, Generator 0 registers (base: 0x40028000)
-#define PWM0_ENABLE_R (*((volatile uint32_t *)0x40028008)) // PWM output enable
-#define PWM0_0_CTL_R (*((volatile uint32_t *)0x40028040)) // Generator control
-#define PWM0_0_LOAD_R (*((volatile uint32_t *)0x40028050)) // Load (period)
-#define PWM0_0_CMPA_R (*((volatile uint32_t *)0x40028058)) // Compare A (duty)
-#define PWM0_0_GENA_R (*((volatile uint32_t *)0x40028060)) // Generator A action
+#define PWM0_ENABLE_R       (*((volatile uint32_t *)0x40028008)) // PWM output enable
+#define PWM0_0_CTL_R        (*((volatile uint32_t *)0x40028040)) // Generator control
+#define PWM0_0_LOAD_R       (*((volatile uint32_t *)0x40028050)) // Load (period)
+#define PWM0_0_CMPA_R       (*((volatile uint32_t *)0x40028058)) // Compare A (duty)
+#define PWM0_0_GENA_R       (*((volatile uint32_t *)0x40028060)) // Generator A action
 
-#define TONE_HZ 440 // Frequency in Hz
-
-#define RED 0x02
-#define BLUE 0x04
+#define RED     0x02
+#define BLUE    0x04
 #define MAGENTA 0x06
-#define GREEN 0x08
-#define YELLOW 0x0A
-#define CYAN 0x0C
+#define GREEN   0x08
+#define YELLOW  0x0A
+#define CYAN    0x0C
 
-#define SYSCLK          16000000UL  
-#define PWM_FREQ        20000UL     
-#define FS              8000UL 
+#define SYSCLK          16000000UL
+#define PWM_FREQ        20000UL
+#define FS              8000UL
 
 #define PWM_LOAD        ((SYSCLK / (2UL * PWM_FREQ)) - 1UL) // pwm clock = SYSCLK/2, LOAD = (SYSCLK/2)/PWM_FREQ - 1 = 399
-#define SYSTICK_RELOAD  ((SYSCLK / FS) - 1UL) // SysTick fires at FS  ->  RELOAD = SYSCLK/FS - 1 = 1999
-#define TICKS_PER_100MS (FS / 10)   // 800 ticks = 100 ms
+#define SYSTICK_RELOAD  ((SYSCLK / FS) - 1UL)               // SysTick fires at FS -> RELOAD = SYSCLK/FS - 1 = 1999
+#define TICKS_PER_100MS (FS / 10)                            // 800 ticks = 100 ms
 
 #define TABLE_SIZE  32
 #define N_BITS      4
-#define MAX_VAL     15 
+#define MAX_VAL     15
+
+// DMA control table (must be 1024-byte aligned, holds primary + alternate sets)
+#pragma DATA_ALIGN(dmaCtrlTable, 1024)
+static uint8_t dmaCtrlTable[1024];
+
+// DMA receive buffer for UART0 RX
+#define UART_RX_BUF_SIZE 4
+static volatile uint8_t uartRxBuf[UART_RX_BUF_SIZE];
 
 volatile uint32_t indexFP = 0;
 volatile uint32_t stepFP  = 0;
@@ -96,14 +104,26 @@ volatile int state = 2;
 void
 UARTSend(const uint8_t *pui8Buffer, uint32_t ui32Count)
 {
-    
-    // Loop when theres more characters to send
+    // Loop while there are more characters to send
     while(ui32Count--)
     {
-        
         // Write the next character to the UART
         MAP_UARTCharPutNonBlocking(UART0_BASE, *pui8Buffer++);
     }
+}
+
+// Reload DMA channel for next block of UART RX bytes
+static void
+DMA_ReloadUARTRx(void)
+{
+    MAP_uDMAChannelTransferSet(
+        UDMA_CHANNEL_UART0RX | UDMA_PRI_SELECT,
+        UDMA_MODE_BASIC,
+        (void *)(UART0_BASE + UART_O_DR), // source: UART0 data register (fixed)
+        (void *)uartRxBuf,                // destination: our rx buffer
+        UART_RX_BUF_SIZE                  // number of bytes to transfer
+    );
+    MAP_uDMAChannelEnable(UDMA_CHANNEL_UART0RX);
 }
 
 void
@@ -111,34 +131,61 @@ UARTIntHandler(void)
 {
     uint32_t ui32Status;
 
- 
+    // Read and clear the asserted interrupts
     ui32Status = MAP_UARTIntStatus(UART0_BASE, true);
-
-
-    // Clear the asserted interrupts
     MAP_UARTIntClear(UART0_BASE, ui32Status);
 
-
-    // Loop while there are characters in the receive FIFO
-    while(MAP_UARTCharsAvail(UART0_BASE))
+    // DMA finished transferring a full block of bytes
+    if(ui32Status & UART_INT_DMARX)
     {
+        // Loop through every byte the DMA deposited
+        for(uint32_t i = 0; i < UART_RX_BUF_SIZE; i++)
+        {
+            char c = (char)uartRxBuf[i];
+            MAP_UARTCharPutNonBlocking(UART0_BASE, c); // echo back
 
-        // Read the next character from the UART and write it back to the UART
-        char c = (char)MAP_UARTCharGetNonBlocking(UART0_BASE);
-        MAP_UARTCharPutNonBlocking(UART0_BASE, c);
-
-        // Toggle pause/play 'p'
-        if (c == 'p' || c == 'P') {
-            paused = !paused;
-            if (paused)
-                UARTSend((uint8_t *)"\r\n[PAUSED]  press p to resume\r\n", 31);
-            else
-                UARTSend((uint8_t *)"\r\n[PLAYING] press p to pause\r\n", 30);
+            // Toggle pause/play on 'p'
+            if(c == 'p' || c == 'P')
+            {
+                paused = !paused;
+                if(paused)
+                    UARTSend((uint8_t *)"\r\n[PAUSED]  press p to resume\r\n", 31);
+                else
+                    UARTSend((uint8_t *)"\r\n[PLAYING] press p to pause\r\n", 30);
+            }
         }
+        // Reload DMA for the next block
+        DMA_ReloadUARTRx();
+    }
+
+    // RX timeout: catches stray bytes that did not fill a full DMA block
+    // (e.g. a single 'p' keypress)
+    if(ui32Status & UART_INT_RT)
+    {
+        // Loop while there are characters in the receive FIFO
+        while(MAP_UARTCharsAvail(UART0_BASE))
+        {
+            // Read the next character from the UART and write it back
+            char c = (char)MAP_UARTCharGetNonBlocking(UART0_BASE);
+            MAP_UARTCharPutNonBlocking(UART0_BASE, c);
+
+            // Toggle pause/play on 'p'
+            if(c == 'p' || c == 'P')
+            {
+                paused = !paused;
+                if(paused)
+                    UARTSend((uint8_t *)"\r\n[PAUSED]  press p to resume\r\n", 31);
+                else
+                    UARTSend((uint8_t *)"\r\n[PLAYING] press p to pause\r\n", 30);
+            }
+        }
+        // Reload DMA since the partial transfer disrupted it
+        if(!MAP_uDMAChannelIsEnabled(UDMA_CHANNEL_UART0RX))
+            DMA_ReloadUARTRx();
     }
 }
 
-// pwm initilisation
+// PWM initialisation
 void PWM_Init(void) {
     SYSCTL_RCGCGPIO_R |= 0x02;
     SYSCTL_RCGCPWM_R  |= 0x01;
@@ -157,7 +204,7 @@ void PWM_Init(void) {
     PWM0_0_CTL_R  = 0;
     PWM0_0_GENA_R = 0x8C;
     PWM0_0_LOAD_R = PWM_LOAD;
-    PWM0_0_CMPA_R = PWM_LOAD;   // 0% duty to start
+    PWM0_0_CMPA_R = PWM_LOAD; // 0% duty to start
     PWM0_0_CTL_R  = 1;
     PWM0_ENABLE_R |= 0x01;
 }
@@ -166,11 +213,11 @@ PortFInit(){
     SYSCTL_RCGCGPIO_R |= 0x20; // Enable clock for Port F
     while ((SYSCTL_RCGCGPIO_R & 0x20) == 0) {} // Wait for clock
     GPIO_PORTF_LOCK_R = 0x4C4F434B; // Unlock Port F
-    GPIO_PORTF_CR_R = 0x1F; // Allow changes to PF4-PF0
-    GPIO_PORTF_DIR_R = 0x0E; // PF1-PF3 output, PF4,PF0 input
+    GPIO_PORTF_CR_R = 0x1F;   // Allow changes to PF4-PF0
+    GPIO_PORTF_DIR_R = 0x0E;  // PF1-PF3 output, PF4,PF0 input
     GPIO_PORTF_AFSEL_R = 0x00; // Disable alternate functions
-    GPIO_PORTF_PUR_R = 0x11; // Enable pull-up on PF4 and PF0
-    GPIO_PORTF_DEN_R = 0x1F; // Enable digital I/O on PF4-PF0
+    GPIO_PORTF_PUR_R = 0x11;  // Enable pull-up on PF4 and PF0
+    GPIO_PORTF_DEN_R = 0x1F;  // Enable digital I/O on PF4-PF0
 }
 
 volatile uint32_t heart = 0;
@@ -187,7 +234,7 @@ void SysTick_Handler(void) {
             indexFP -= ((uint32_t)TABLE_SIZE << 8);
         }
     } else {
-        PWM0_0_CMPA_R = PWM_LOAD / 2;   // hold at mid-rail during rests
+        PWM0_0_CMPA_R = PWM_LOAD / 2; // hold at mid-rail during rests
     }
 }
 
@@ -209,9 +256,9 @@ static void waitTicks(uint32_t ticks) {
 // systick initialisation
 void SysTick_Init(void) {
     NVIC_ST_CTRL_R    = 0;
-    NVIC_ST_RELOAD_R  = SYSTICK_RELOAD;  // 1999
+    NVIC_ST_RELOAD_R  = SYSTICK_RELOAD; // 1999
     NVIC_ST_CURRENT_R = 0;
-    NVIC_ST_CTRL_R    = 0x07;           
+    NVIC_ST_CTRL_R    = 0x07;
 }
 
 void rest(float dur) { // 10 for 1 sec
@@ -223,23 +270,64 @@ void rest(float dur) { // 10 for 1 sec
     muted = 0;
 }
 
-void note (int keynum, float dur){
-    float frequency = TONE_HZ*pow(2, (keynum - 49)/12.0);
+void note(int keynum, float dur){
+    float frequency = 440.0f * powf(2.0f, (keynum - 49) / 12.0f);
     stepFP  = (uint32_t)(TABLE_SIZE * frequency * 256.0f / FS + 0.5f);
 
     indexFP = 0;
     muted   = 0;
 
     waitTicks((uint32_t)(dur * TICKS_PER_100MS));
-
 }
 
-void G();
-void C();
-void F();
-void E();
-void A();
-void D();
+// DMA + UART initialisation
+void
+UART_DMA_Init(void)
+{
+    // Enable UART0, Port A, and uDMA peripherals
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UDMA);
+
+    // Configure PA0/PA1 for UART function
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    MAP_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+
+    // Configure UART0: 115200 baud, 8N1
+    MAP_UARTConfigSetExpClk(UART0_BASE, MAP_SysCtlClockGet(), 115200,
+                            (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
+                             UART_CONFIG_PAR_NONE));
+
+    // Enable DMA on UART0 RX
+    MAP_UARTDMAEnable(UART0_BASE, UART_DMA_RX);
+
+    // Unmask DMA-done and RX-timeout interrupts
+    MAP_UARTIntEnable(UART0_BASE, UART_INT_DMARX | UART_INT_RT);
+    MAP_IntEnable(INT_UART0);
+
+    // Enable uDMA controller and set control table base address
+    MAP_uDMAEnable();
+    MAP_uDMAControlBaseSet(dmaCtrlTable);
+
+    // Assign channel 8 to UART0 RX (Table 9-1 in TM4C123 datasheet)
+    MAP_uDMAChannelAssign(UDMA_CH8_UART0RX);
+
+    // Clear all channel attributes before configuring
+    MAP_uDMAChannelAttributeDisable(UDMA_CHANNEL_UART0RX,
+        UDMA_ATTR_ALTSELECT | UDMA_ATTR_USEBURST |
+        UDMA_ATTR_HIGH_PRIORITY | UDMA_ATTR_REQMASK);
+
+    // 8-bit transfers, source fixed (UART DR), destination increments by 1 byte
+    // arbitrate every 4 bytes
+    MAP_uDMAChannelControlSet(
+        UDMA_CHANNEL_UART0RX | UDMA_PRI_SELECT,
+        UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_4
+    );
+
+    // Arm the first DMA transfer
+    DMA_ReloadUARTRx();
+}
 
 void G(){
 
@@ -251,7 +339,7 @@ void G(){
     }
 
     rest(1);
-    
+
     if ((progression == 1) || (progression == 3)) {
         progression++;
         state = 1;
@@ -397,25 +485,14 @@ int main(void) {
     MAP_SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_OSC | SYSCTL_OSC_MAIN |
                        SYSCTL_XTAL_16MHZ);
 
-    PWM_Init();                    
-    SysTick_Init();    
+    PWM_Init();
+    SysTick_Init();
     PortFInit();
-
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
 
     MAP_IntMasterEnable();
 
-    GPIOPinConfigure(GPIO_PA0_U0RX);
-    GPIOPinConfigure(GPIO_PA1_U0TX);
-    MAP_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-
-    MAP_UARTConfigSetExpClk(UART0_BASE, MAP_SysCtlClockGet(), 115200,
-                            (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
-                             UART_CONFIG_PAR_NONE));
-
-    MAP_IntEnable(INT_UART0);
-    MAP_UARTIntEnable(UART0_BASE, UART_INT_RX | UART_INT_RT);
+    // Replaces the old manual UART + interrupt setup
+    UART_DMA_Init();
 
     UARTSend((uint8_t *)"Ready. Press p to pause/play.\r\n", 31);
 
@@ -429,6 +506,4 @@ int main(void) {
             if (state == 6) D();
         }
     }
-    
-    
 }
