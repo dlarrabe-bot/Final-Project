@@ -72,7 +72,6 @@ __error__(char *pcFilename, uint32_t ui32Line)
 #define TICKS_PER_100MS (FS / 10)                            // 800 ticks = 100 ms
 
 #define TABLE_SIZE  32
-#define N_BITS      4
 #define MAX_VAL     15
 
 // DMA control table (must be 1024-byte aligned, holds primary + alternate sets)
@@ -83,11 +82,11 @@ static uint8_t dmaCtrlTable[1024];
 #define UART_RX_BUF_SIZE 4
 static volatile uint8_t uartRxBuf[UART_RX_BUF_SIZE];
 
-volatile uint32_t indexFP = 0;
-volatile uint32_t stepFP  = 0;
+volatile uint32_t indexFP  = 0;
+volatile uint32_t stepFP   = 0;
 volatile uint32_t sysTicks = 0;
-volatile uint8_t muted = 0;
-volatile uint8_t paused = 0; // 1 = user paused via 'p' keypress, 0 = playing
+volatile uint8_t  muted    = 0;
+volatile uint8_t  paused   = 0; // 1 = user paused via 'p' keypress, 0 = playing
 
 const uint8_t sineTable[TABLE_SIZE] = {
 8,10,11,13,14,15,15,15,
@@ -97,8 +96,8 @@ const uint8_t sineTable[TABLE_SIZE] = {
 };
 
 volatile int progression = 1;
-volatile int ending = 0;
-volatile int state = 2;
+volatile int ending      = 0;
+volatile int state       = 2;
 
 // Send a string to the UART
 void
@@ -186,7 +185,8 @@ UARTIntHandler(void)
 }
 
 // PWM initialisation
-void PWM_Init(void) {
+void PWM_Init(void)
+{
     SYSCTL_RCGCGPIO_R |= 0x02;
     SYSCTL_RCGCPWM_R  |= 0x01;
     while ((SYSCTL_RCGCGPIO_R & 0x02) == 0) {}
@@ -209,22 +209,22 @@ void PWM_Init(void) {
     PWM0_ENABLE_R |= 0x01;
 }
 
-PortFInit(){
-    SYSCTL_RCGCGPIO_R |= 0x20; // Enable clock for Port F
+// Port F initialisation
+void PortFInit(void)
+{
+    SYSCTL_RCGCGPIO_R |= 0x20;             // Enable clock for Port F
     while ((SYSCTL_RCGCGPIO_R & 0x20) == 0) {} // Wait for clock
-    GPIO_PORTF_LOCK_R = 0x4C4F434B; // Unlock Port F
-    GPIO_PORTF_CR_R = 0x1F;   // Allow changes to PF4-PF0
-    GPIO_PORTF_DIR_R = 0x0E;  // PF1-PF3 output, PF4,PF0 input
-    GPIO_PORTF_AFSEL_R = 0x00; // Disable alternate functions
-    GPIO_PORTF_PUR_R = 0x11;  // Enable pull-up on PF4 and PF0
-    GPIO_PORTF_DEN_R = 0x1F;  // Enable digital I/O on PF4-PF0
+    GPIO_PORTF_LOCK_R  = 0x4C4F434B;       // Unlock Port F
+    GPIO_PORTF_CR_R    = 0x1F;             // Allow changes to PF4-PF0
+    GPIO_PORTF_DIR_R   = 0x0E;             // PF1-PF3 output, PF4,PF0 input
+    GPIO_PORTF_AFSEL_R = 0x00;             // Disable alternate functions
+    GPIO_PORTF_PUR_R   = 0x11;             // Enable pull-up on PF4 and PF0
+    GPIO_PORTF_DEN_R   = 0x1F;             // Enable digital I/O on PF4-PF0
 }
 
-volatile uint32_t heart = 0;
-
-void SysTick_Handler(void) {
+void SysTick_Handler(void)
+{
     sysTicks++;   // always increment for timing
-    heart++;
     if (!muted && !paused) { // silence when muted (rests) OR when user has paused playback
         uint32_t idx = (indexFP >> 8) % TABLE_SIZE;
         PWM0_0_CMPA_R = PWM_LOAD - (PWM_LOAD * (uint32_t)sineTable[idx]) / MAX_VAL;
@@ -238,7 +238,8 @@ void SysTick_Handler(void) {
     }
 }
 
-static void waitTicks(uint32_t ticks) {
+static void waitTicks(uint32_t ticks)
+{
     uint32_t counted = 0;
     uint32_t last    = sysTicks;
 
@@ -253,15 +254,17 @@ static void waitTicks(uint32_t ticks) {
     }
 }
 
-// systick initialisation
-void SysTick_Init(void) {
+// SysTick initialisation
+void SysTick_Init(void)
+{
     NVIC_ST_CTRL_R    = 0;
     NVIC_ST_RELOAD_R  = SYSTICK_RELOAD; // 1999
     NVIC_ST_CURRENT_R = 0;
     NVIC_ST_CTRL_R    = 0x07;
 }
 
-void rest(float dur) { // 10 for 1 sec
+void rest(float dur) // 10 for 1 sec
+{
     muted   = 1;
     indexFP = 0;
 
@@ -270,7 +273,8 @@ void rest(float dur) { // 10 for 1 sec
     muted = 0;
 }
 
-void note(int keynum, float dur){
+void note(int keynum, float dur)
+{
     float frequency = 440.0f * powf(2.0f, (keynum - 49) / 12.0f);
     stepFP  = (uint32_t)(TABLE_SIZE * frequency * 256.0f / FS + 0.5f);
 
@@ -329,13 +333,13 @@ UART_DMA_Init(void)
     DMA_ReloadUARTRx();
 }
 
-void G(){
-
+void G(void)
+{
     GPIO_PORTF_DATA_R = BLUE;
-    if (progression == 7){
-        note(47,10);
+    if (progression == 7) {
+        note(47, 10);
     } else {
-         note(47, 5);
+        note(47, 5);
     }
 
     rest(1);
@@ -345,52 +349,53 @@ void G(){
         state = 1;
         return;
     }
-    if ((progression == 2)) {
+    if (progression == 2) {
         progression++;
         state = 3;
         return;
     }
-    if ((progression == 4)) {
+    if (progression == 4) {
         progression++;
         state = 5;
         return;
     }
-    if ((progression == 7)) {
+    if (progression == 7) {
         progression = 1;
         state = 3;
         return;
     }
-
 }
 
-void C(){
+void C(void)
+{
     GPIO_PORTF_DATA_R = RED;
-    if (progression == 7){
-        note(40,10);
+    if (progression == 7) {
+        note(40, 10);
     } else {
-         note(40, 5);
+        note(40, 5);
     }
 
     rest(1);
-    if ((progression == 1)) {
+
+    if (progression == 1) {
         progression++;
         state = 2;
         return;
     }
-    if ((progression == 2)) {
+    if (progression == 2) {
         progression++;
         state = 1;
         return;
     }
-    if ((progression == 7)) {
+    if (progression == 7) {
         progression = 1;
         state = 1;
         return;
     }
-
 }
 
-void F(){
+void F(void)
+{
     GPIO_PORTF_DATA_R = GREEN;
     note(45, 5);
     rest(1);
@@ -406,7 +411,8 @@ void F(){
     }
 }
 
-void E(){
+void E(void)
+{
     GPIO_PORTF_DATA_R = YELLOW;
     note(44, 5);
     rest(1);
@@ -420,65 +426,63 @@ void E(){
         state = 6;
         return;
     }
-
 }
 
-void A(){
+void A(void)
+{
     GPIO_PORTF_DATA_R = MAGENTA;
     note(49, 5);
     rest(1);
-    if ((progression == 6)) {
+    if (progression == 6) {
         progression++;
         state = 1;
         return;
     }
-    if ((progression == 5)) {
+    if (progression == 5) {
         progression++;
         state = 5;
         return;
     }
-
 }
 
-void D(){
+void D(void)
+{
     GPIO_PORTF_DATA_R = CYAN;
-    if (progression == 7){
-        note(42,10);
+    if (progression == 7) {
+        note(42, 10);
     } else {
-         note(42, 5);
+        note(42, 5);
     }
 
     rest(1);
-    if ((progression == 6)) {
+
+    if (progression == 6) {
         progression++;
         state = 2;
         return;
     }
-
-    if ((progression == 7)) {
-        if (ending == 0){
+    if (progression == 7) {
+        if (ending == 0) {
             progression = 1;
             ending = 1;
             state = 1;
             return;
-        }
-        else {
+        } else {
             progression = 1;
             ending = 0;
             state = 2;
             return;
         }
     }
-
-    if ((progression == 5)) {
+    if (progression == 5) {
         progression++;
         state = 6;
         return;
     }
-
 }
 
-int main(void) {
+int main(void)
+{
     MAP_FPUEnable();
     MAP_FPULazyStackingEnable();
 
@@ -496,7 +500,8 @@ int main(void) {
 
     UARTSend((uint8_t *)"Ready. Press p to pause/play.\r\n", 31);
 
-    while(1){
+    while(1)
+    {
         if (!paused) {
             if (state == 1) G();
             if (state == 2) C();
