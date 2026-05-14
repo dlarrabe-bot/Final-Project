@@ -56,6 +56,9 @@ __error__(char *pcFilename, uint32_t ui32Line)
 #define PWM0_0_CMPA_R       (*((volatile uint32_t *)0x40028058)) // Compare A (duty)
 #define PWM0_0_GENA_R       (*((volatile uint32_t *)0x40028060)) // Generator A action
 
+// UART0 data register offset
+#define UART0_DR_OFFSET     0x000
+
 #define RED     0x02
 #define BLUE    0x04
 #define MAGENTA 0x06
@@ -118,9 +121,9 @@ DMA_ReloadUARTRx(void)
     MAP_uDMAChannelTransferSet(
         UDMA_CHANNEL_UART0RX | UDMA_PRI_SELECT,
         UDMA_MODE_BASIC,
-        (void *)(UART0_BASE + UART_O_DR), // source: UART0 data register (fixed)
-        (void *)uartRxBuf,                // destination: our rx buffer
-        UART_RX_BUF_SIZE                  // number of bytes to transfer
+        (void *)(UART0_BASE + UART0_DR_OFFSET), // source: UART0 data register (fixed)
+        (void *)uartRxBuf,                      // destination: our rx buffer
+        UART_RX_BUF_SIZE                        // number of bytes to transfer
     );
     MAP_uDMAChannelEnable(UDMA_CHANNEL_UART0RX);
 }
@@ -129,6 +132,8 @@ void
 UARTIntHandler(void)
 {
     uint32_t ui32Status;
+    uint32_t i;
+    char c;
 
     // Read and clear the asserted interrupts
     ui32Status = MAP_UARTIntStatus(UART0_BASE, true);
@@ -138,9 +143,9 @@ UARTIntHandler(void)
     if(ui32Status & UART_INT_DMARX)
     {
         // Loop through every byte the DMA deposited
-        for(uint32_t i = 0; i < UART_RX_BUF_SIZE; i++)
+        for(i = 0; i < UART_RX_BUF_SIZE; i++)
         {
-            char c = (char)uartRxBuf[i];
+            c = (char)uartRxBuf[i];
             MAP_UARTCharPutNonBlocking(UART0_BASE, c); // echo back
 
             // Toggle pause/play on 'p'
@@ -165,7 +170,7 @@ UARTIntHandler(void)
         while(MAP_UARTCharsAvail(UART0_BASE))
         {
             // Read the next character from the UART and write it back
-            char c = (char)MAP_UARTCharGetNonBlocking(UART0_BASE);
+            c = (char)MAP_UARTCharGetNonBlocking(UART0_BASE);
             MAP_UARTCharPutNonBlocking(UART0_BASE, c);
 
             // Toggle pause/play on 'p'
@@ -212,14 +217,14 @@ void PWM_Init(void)
 // Port F initialisation
 void PortFInit(void)
 {
-    SYSCTL_RCGCGPIO_R |= 0x20;             // Enable clock for Port F
-    while ((SYSCTL_RCGCGPIO_R & 0x20) == 0) {} // Wait for clock
-    GPIO_PORTF_LOCK_R  = 0x4C4F434B;       // Unlock Port F
-    GPIO_PORTF_CR_R    = 0x1F;             // Allow changes to PF4-PF0
-    GPIO_PORTF_DIR_R   = 0x0E;             // PF1-PF3 output, PF4,PF0 input
-    GPIO_PORTF_AFSEL_R = 0x00;             // Disable alternate functions
-    GPIO_PORTF_PUR_R   = 0x11;             // Enable pull-up on PF4 and PF0
-    GPIO_PORTF_DEN_R   = 0x1F;             // Enable digital I/O on PF4-PF0
+    SYSCTL_RCGCGPIO_R |= 0x20;                  // Enable clock for Port F
+    while ((SYSCTL_RCGCGPIO_R & 0x20) == 0) {}  // Wait for clock
+    GPIO_PORTF_LOCK_R  = 0x4C4F434B;            // Unlock Port F
+    GPIO_PORTF_CR_R    = 0x1F;                  // Allow changes to PF4-PF0
+    GPIO_PORTF_DIR_R   = 0x0E;                  // PF1-PF3 output, PF4,PF0 input
+    GPIO_PORTF_AFSEL_R = 0x00;                  // Disable alternate functions
+    GPIO_PORTF_PUR_R   = 0x11;                  // Enable pull-up on PF4 and PF0
+    GPIO_PORTF_DEN_R   = 0x1F;                  // Enable digital I/O on PF4-PF0
 }
 
 void SysTick_Handler(void)
